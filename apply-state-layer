@@ -1,0 +1,163 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s| %(name)s/%(process)d: %(message)s '
+           '@%(funcName)s:%(lineno)d #%(levelname)s',
+)
+_LOG = logging.getLogger(__name__)
+_LOG.setLevel(logging.INFO)
+
+import salt.config
+import salt.client
+import salt.output
+import yaml
+import os
+import sys
+
+
+VK_ROOT = os.environ['VK_ROOT']
+SALT_ROOT = os.path.join(VK_ROOT, 'salt')
+LAYER_ROOT = os.path.join(SALT_ROOT, 'layers')
+STATE_ROOT = os.path.join(SALT_ROOT, 'states')
+PILLAR_ROOT = os.path.join(SALT_ROOT, 'pillar')
+assert all(map(os.path.isdir, (VK_ROOT, SALT_ROOT, STATE_ROOT, PILLAR_ROOT)))
+
+
+class StateLayer(object):
+    '''
+    An individual Salt State Layer.
+    The purpose of a state layer is to allow easy caching of Docker images when being built with Salt.
+    '''
+
+    def __init__(self, path, name=None):
+        # No trailing slash
+        if path.endswith('/'):
+            path = path[:-1]
+
+        if not name:
+            name = os.path.basename(path)
+        self.name = name
+
+        self.given_path = path
+        self.abs_given_path = os.path.abspath(path)
+        self.path = os.path.realpath(self.abs_given_path)
+
+        self.layer_path = os.path.join(LAYER_ROOT, self.name)
+
+        self._validate()
+
+    def __repr__(self):
+        return '<%s:%s>' % (
+            self.__class__.__name__,
+            self.name,
+        )
+
+    def _validate(self):
+        '''
+        Validates the state layer to make sure it has the needed files.
+        '''
+        requirements = set(['init.sls', 'pillar.sls'])
+        files = os.listdir(self.path)
+        missing_files = list(requirements.difference(files))
+        if missing_files:
+            raise Exception('Missing files: {}'.format(missing_files))
+
+    def install(self):
+        '''
+        Install state layer (link, add to includes on dynamic sls files)
+        '''
+        self._link()
+        self._add_to_dynamics()
+
+    def _link(self):
+        '''
+        Install state layer into dynamic salt roots (state/pillar).
+        '''
+        linked_state_path = os.path.join(STATE_ROOT, self.name)
+        pillar_path = os.path.join(self.layer_path, 'pillar.sls')
+        linked_pillar_filename = '{}.sls'.format(self.name)
+        linked_pillar_path = os.path.join(PILLAR_ROOT, linked_pillar_filename)
+
+        links = [
+            # layer path
+            (self.path, self.layer_path),
+            # linked state
+            (self.layer_path, linked_state_path),
+            # linked pillar
+            (pillar_path, linked_pillar_path),
+        ]
+
+        for src, dst in links:
+            if os.path.exists(dst):
+                if os.path.samefile(src, dst):
+                    _LOG.debug('Already symlinked: %s -> %s', src, dst)
+                    continue
+                dst_linked_to = os.path.realpath(dst)
+                raise Exception('Destination {} points to {} (expected {})'.format(dst, dst_linked_to, src))
+            _LOG.info("Creating symlink: %s -> %s", src, dst)
+            os.symlink(src, dst)
+
+    def _add_to_dynamics(self):
+        for root in (PILLAR_ROOT, STATE_ROOT):
+            sls_file = os.path.join(root, 'dynamic.sls')
+            self._add_to_sls_include(sls_file)
+
+    def _add_to_sls_include(self, sls_file):
+        '''
+        Given an sls file path, it will put our name within an include block.
+
+        If the file doesn't exist it will be created.
+        If the file doesn't contain an include block one will be added.
+        '''
+        if not os.path.exists(sls_file):
+            _LOG.info('Creating sls: %s', sls_file)
+            with open(sls_file, 'a'):
+                os.utime(sls_file, None)
+
+        with open(sls_file, 'r+') as fp:
+            contents = yaml.load(fp)
+
+            if not contents:
+                contents = dict(include=[])
+            elif 'include' not in contents:
+                contents['include'] = []
+
+            if self.name in contents['include']:
+                _LOG.debug('Already included in sls %s: %s', sls_file, self.name)
+                return
+
+            _LOG.info('Adding as include in sls %s: %s', sls_file, self.name)
+            contents['include'].append(self.name)
+
+            fp.seek(0)
+            yaml.dump(contents, fp)
+            fp.truncate()
+
+    def apply(self, display_output=True):
+        '''
+        Applies the State Layer.
+        '''
+        _LOG.info("Applying state layer: %s", self.name)
+        caller = salt.client.Caller()
+        ret = caller.cmd('state.sls', self.name)
+        if display_output:
+            salt.output.display_output({'local': ret}, 'highstate', caller.opts)
+        return ret
+
+
+def main():
+    if len(sys.argv) != 2:
+        basename = os.path.basename(sys.argv[0])
+        print("Usage: %s LAYER_PATH" % basename, file=sys.stderr)
+        sys.exit(1)
+    path = sys.argv[1]
+    layer = StateLayer(path)
+    layer.install()
+    layer.apply()
+
+
+if __name__ == '__main__':
+    main()
