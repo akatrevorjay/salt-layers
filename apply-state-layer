@@ -136,12 +136,14 @@ class StateLayer(object):
             yaml.dump(contents, fp)
             fp.truncate()
 
-    def apply(self, display_output=True):
+    def apply(self, display_output=True, force_color=True):
         '''
         Applies the State Layer.
         '''
         _LOG.info("Applying state layer: %s", self.name)
         caller = salt.client.Caller()
+        if force_color:
+            caller.opts['force_color'] = True
         ret = caller.cmd('state.sls', self.name)
         if display_output:
             salt.output.display_output({'local': ret}, 'highstate', caller.opts)
