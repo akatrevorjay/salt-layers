@@ -7,7 +7,7 @@ logging.basicConfig(
     format='%(asctime)s| %(name)s/%(process)d: %(message)s '
            '@%(funcName)s:%(lineno)d #%(levelname)s',
 )
-_LOG = logging.getLogger(__name__)
+_LOG = logging.getLogger('apply-state-layer')
 _LOG.setLevel(logging.INFO)
 
 import salt.config
@@ -144,9 +144,16 @@ class StateLayer(object):
         caller = salt.client.Caller()
         if force_color:
             caller.opts['force_color'] = True
+
         ret = caller.cmd('state.sls', self.name)
+
         if display_output:
             salt.output.display_output({'local': ret}, 'highstate', caller.opts)
+
+        func = caller.sminion.functions['state.sls']
+        ret['retcode'] = sys.modules[func.__module__].__context__.get('retcode', 0)
+
+        _LOG.debug('Salt layer %s apply ret: %s', self.name, ret)
         return ret
 
 
@@ -158,7 +165,8 @@ def main():
     path = sys.argv[1]
     layer = StateLayer(path)
     layer.install()
-    layer.apply()
+    ret = layer.apply()
+    sys.exit(ret['retcode'])
 
 
 if __name__ == '__main__':
