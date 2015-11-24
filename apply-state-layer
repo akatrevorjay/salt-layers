@@ -182,16 +182,17 @@ class StateLayer(object):
 
         # Run minion function to apply state
         ret = caller.cmd('state.sls', self.name)
+        _LOG.debug('Salt layer %s apply ret: %s', self.name, ret)
 
         if display_output:
             # Use salt outputter to display nicely
             salt.output.display_output({'local': ret}, 'highstate', caller.opts)
 
+        # I hate this, but this is how it's done in salt.cli.caller
         func = caller.sminion.functions['state.sls']
-        ret['retcode'] = sys.modules[func.__module__].__context__.get('retcode', 0)
+        retcode = sys.modules[func.__module__].__context__.get('retcode', 0)
 
-        _LOG.debug('Salt layer %s apply ret: %s', self.name, ret)
-        return ret
+        return retcode
 
 
 def main():
@@ -206,10 +207,10 @@ def main():
     layer = StateLayer(path)
     layer.install()
     try:
-        ret = layer.apply()
+        retcode = layer.apply()
     finally:
         image_cleanup()
-    sys.exit(ret['retcode'])
+    sys.exit(retcode)
 
 
 if __name__ == '__main__':
