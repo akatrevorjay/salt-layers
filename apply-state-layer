@@ -8,22 +8,53 @@ logging.basicConfig(
            '@%(funcName)s:%(lineno)d #%(levelname)s',
 )
 _LOG = logging.getLogger('apply-state-layer')
-_LOG.setLevel(logging.INFO)
+
+import subprocess
+import os
+import sys
 
 import salt.config
 import salt.client
 import salt.output
 import yaml
-import os
-import sys
 
 
+def _logger_setup(env_var='LOG_LEVEL', default_level=logging.INFO):
+    '''
+    Configure logger based on env var with default level.
+    '''
+    log_level = os.environ.get(env_var, default_level)
+    log_level = logging.getLevelName(log_level)
+    _LOG.setLevel(log_level)
+
+_logger_setup()
+
+
+# State layer paths
 VK_ROOT = os.environ['VK_ROOT']
 SALT_ROOT = os.path.join(VK_ROOT, 'salt')
 LAYER_ROOT = os.path.join(SALT_ROOT, 'layers')
 STATE_ROOT = os.path.join(SALT_ROOT, 'states')
 PILLAR_ROOT = os.path.join(SALT_ROOT, 'pillar')
-assert all(map(os.path.isdir, (VK_ROOT, SALT_ROOT, STATE_ROOT, PILLAR_ROOT)))
+# Ensure sane environment
+assert all([os.path.isdir(x) for x in (VK_ROOT, SALT_ROOT, STATE_ROOT, PILLAR_ROOT)])
+
+
+def image_cleanup():
+    '''
+    Cleans up image; cleans apt cache and downloaded lists.
+    '''
+    _LOG.debug("Running image cleanup")
+    subprocess.check_call(["image-cleanup"])
+
+
+def touch(file_path):
+    '''
+    Convenience wrapper for 'touch'ing a file.
+    '''
+    with open(file_path, 'a'):
+        os.utime(file_path, None)
+    return True
 
 
 class StateLayer(object):
@@ -97,7 +128,7 @@ class StateLayer(object):
                     continue
                 dst_linked_to = os.path.realpath(dst)
                 raise Exception('Destination {} points to {} (expected {})'.format(dst, dst_linked_to, src))
-            _LOG.info("Creating symlink: %s -> %s", src, dst)
+            _LOG.debug("Creating symlink: %s -> %s", src, dst)
             os.symlink(src, dst)
 
     def _add_to_dynamics(self):
@@ -112,10 +143,10 @@ class StateLayer(object):
         If the file doesn't exist it will be created.
         If the file doesn't contain an include block one will be added.
         '''
+        # Create file if it does not exist.
         if not os.path.exists(sls_file):
-            _LOG.info('Creating sls: %s', sls_file)
-            with open(sls_file, 'a'):
-                os.utime(sls_file, None)
+            _LOG.debug('Creating file: %s', sls_file)
+            touch(sls_file)
 
         with open(sls_file, 'r+') as fp:
             contents = yaml.load(fp)
@@ -126,12 +157,13 @@ class StateLayer(object):
                 contents['include'] = []
 
             if self.name in contents['include']:
-                _LOG.debug('Already included in sls %s: %s', sls_file, self.name)
+                _LOG.debug('Already included %s in sls %s', self.name, sls_file)
                 return
 
-            _LOG.info('Adding as include in sls %s: %s', sls_file, self.name)
+            _LOG.debug('Adding %s as include in sls %s', self.name, sls_file)
             contents['include'].append(self.name)
 
+            # Write new file using existing file handle
             fp.seek(0)
             yaml.dump(contents, fp)
             fp.truncate()
@@ -141,13 +173,18 @@ class StateLayer(object):
         Applies the State Layer.
         '''
         _LOG.info("Applying state layer: %s", self.name)
+
+        # Create salt client instance
         caller = salt.client.Caller()
+        # Set any minion options
         if force_color:
             caller.opts['force_color'] = True
 
+        # Run minion function to apply state
         ret = caller.cmd('state.sls', self.name)
 
         if display_output:
+            # Use salt outputter to display nicely
             salt.output.display_output({'local': ret}, 'highstate', caller.opts)
 
         func = caller.sminion.functions['state.sls']
@@ -158,6 +195,9 @@ class StateLayer(object):
 
 
 def main():
+    '''
+    Main
+    '''
     if len(sys.argv) != 2:
         basename = os.path.basename(sys.argv[0])
         print("Usage: %s LAYER_PATH" % basename, file=sys.stderr)
@@ -165,7 +205,10 @@ def main():
     path = sys.argv[1]
     layer = StateLayer(path)
     layer.install()
-    ret = layer.apply()
+    try:
+        ret = layer.apply()
+    finally:
+        image_cleanup()
     sys.exit(ret['retcode'])
 
 
