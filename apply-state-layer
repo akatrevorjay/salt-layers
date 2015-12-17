@@ -175,8 +175,8 @@ class StateLayer(object):
                 _LOG.debug('Already included %s in sls %s', name, sls_file)
                 return
 
-            _LOG.info('Adding %s as first include in sls %s', name, sls_file)
-            contents['include'].insert(0, name)
+            _LOG.info('Adding %s as include in sls %s', name, sls_file)
+            contents['include'].append(name)
 
             # Write new file using existing file handle
             fp.seek(0)
