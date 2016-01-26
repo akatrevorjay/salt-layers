@@ -1,22 +1,22 @@
 #!/usr/bin/python2
 from __future__ import print_function
 
+import os
+import sys
+import subprocess
 import logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s| %(name)s/%(process)d: %(message)s '
            '@%(funcName)s:%(lineno)d #%(levelname)s',
+    stream=sys.stdout,
 )
 _LOG = logging.getLogger('apply-state-layer')
 
-import subprocess
-import os
-import sys
-
+import yaml
 import salt.config
 import salt.client
 import salt.output
-import yaml
 
 
 def _logger_setup(env_var='LOG_LEVEL', default_level=logging.INFO):
