@@ -1,0 +1,20 @@
+#!/bin/bash -e
+fn=/etc/salt/minion.d/masterless.conf
+dir="${fn%/*}"
+
+mkdir -pv "$dir" "$STATE_ROOT" "$PILLAR_ROOT" "$LAYERS_ROOT"
+
+cat > "$fn" <<EOF
+file_client: local
+state_output: mixed
+
+file_roots:
+  base:
+    - $STATE_ROOT
+    - $LAYERS_ROOT
+
+pillar_roots:
+  base:
+    - $PILLAR_ROOT
+EOF
+

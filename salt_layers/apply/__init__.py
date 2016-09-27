@@ -1,43 +1,28 @@
-#!/usr/bin/python2
+#!/usr/bin/env python2
+#
+# Salt unfortunately requires python 2 at thes time of writing.
+#
 from __future__ import print_function
 
 import os
 import sys
+import yaml
 import subprocess
 import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s| %(name)s/%(process)d: %(message)s '
-           '@%(funcName)s:%(lineno)d #%(levelname)s',
-    stream=sys.stdout,
-)
-_LOG = logging.getLogger('apply-state-layer')
-
-import yaml
 import salt.config
 import salt.client
 import salt.output
 
-
-def _logger_setup(env_var='LOG_LEVEL', default_level=logging.INFO):
-    '''
-    Configure logger based on env var with default level.
-    '''
-    log_level = os.environ.get(env_var, default_level)
-    log_level = logging.getLevelName(log_level)
-    _LOG.setLevel(log_level)
-
-_logger_setup()
-
+_LOG = logging.getLogger(__name__)
 
 # State layer paths
-VK_ROOT = os.environ['VK_ROOT']
-SALT_ROOT = os.path.join(VK_ROOT, 'salt')
+IMAGE_ROOT = os.environ['IMAGE_ROOT']
+SALT_ROOT = os.path.join(IMAGE_ROOT, 'salt')
 LAYER_ROOT = os.path.join(SALT_ROOT, 'layers')
 STATE_ROOT = os.path.join(SALT_ROOT, 'states')
 PILLAR_ROOT = os.path.join(SALT_ROOT, 'pillar')
 # Ensure sane environment
-assert all([os.path.isdir(x) for x in (VK_ROOT, SALT_ROOT, STATE_ROOT, PILLAR_ROOT)])
+assert all([os.path.isdir(x) for x in (IMAGE_ROOT, SALT_ROOT, STATE_ROOT, PILLAR_ROOT)])
 
 DYNAMIC_PILLAR_SLS = os.path.join(PILLAR_ROOT, 'dynamic.sls')
 DYNAMIC_STATE_SLS = os.path.join(STATE_ROOT, 'dynamic.sls')
@@ -211,23 +196,3 @@ class StateLayer(object):
             return ret, retcode
         finally:
             image_cleanup()
-
-
-def main():
-    '''
-    Main
-    '''
-    if len(sys.argv) != 2:
-        basename = os.path.basename(sys.argv[0])
-        print("Usage: %s LAYER_PATH" % basename, file=sys.stderr)
-        sys.exit(1)
-    path = sys.argv[1]
-    layer = StateLayer(path)
-    layer.install()
-    if layer.applyable:
-        ret, retcode = layer.apply()
-        sys.exit(retcode)
-
-
-if __name__ == '__main__':
-    main()
