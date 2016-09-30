@@ -1,54 +1,9 @@
-MAKEFLAGS += --warn-undefined-variables
+SALT_RELEASES := latest 2016.3 2015.8
 
-# Do not:
-# o  use make's built-in rules and variables
-#    (this increases performance and avoids hard-to-debug behaviour);
-# o  print "Entering directory ...";
-MAKEFLAGS += -rR --no-print-directory
+TAGS ?= $(foreach TAG,$(UBUNTU_TAGS),$(addprefix $(TAG)-,$(SALT_RELEASES)))
 
-REPO = trevorj/docker-salt-layers
-BUILD_TAG = build
-IMAGE = $(REPO):$(BUILD_TAG)
+EXTRA_TAGS += $(foreach TAG,$(UBUNTU_TAGS),$(TAG)=$(TAG)-latest) \
+							$(foreach SALT_RELEASE,$(SALT_RELEASES),$(SALT_RELEASE)=latest-$(SALT_RELEASE))
 
-export REPO IMAGE BUILD_TAG
+include Makefile.docker
 
-BUILD = docker build
-RUN ?= docker run -it --rm -v $(PWD)/image:/image
-BIN ?= image/bin
-
-GOLANG_IMAGE = golang:1.7
-GOLANG_BUILD = docker run --rm -it -v $(PWD)/$(BIN):/go/bin $(GOLANG_IMAGE)
-GOLANG_DEPS = $(BIN)/boilr
-REPO_$(BIN)/boilr = github.com/tmrts/boilr
-
-BUILD_DEPS = $(GOLANG_DEPS)
-DEPS = $(BUILD_DEPS)
-
-.PHONY: all deps build test
-all: build
-
-$(GOLANG_DEPS):
-	$(GOLANG_BUILD)	go get -u -x -v $(REPO_$@)
-
-clean:
-	rm -rf $(BUILD_DEPS)
-
-deps: $(DEPS)
-
-build: deps
-	$(BUILD) -t $(IMAGE) .
-
-test: build
-	$(MAKE) -C tests PARENT_IMAGE=$(IMAGE)
-
-bash: build
-	$(RUN) $(IMAGE) bash
-
-bash-verbose: build
-	$(RUN) -e ENTRYPOINT_VERBOSE=1 $(IMAGE) bash
-
-bash-debug: build
-	$(RUN) -e ENTRYPOINT_DEBUG=1 $(IMAGE) bash
-
-bash-trace: build
-	$(RUN) -e ENTRYPOINT_TRACE=1 $(IMAGE) bash
