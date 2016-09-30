@@ -1,54 +1,92 @@
-MAKEFLAGS += --warn-undefined-variables
-
 # Do not:
 # o  use make's built-in rules and variables
 #    (this increases performance and avoids hard-to-debug behaviour);
 # o  print "Entering directory ...";
-MAKEFLAGS += -rR --no-print-directory
+MAKEFLAGS += -rR --no-print-directory --warn-undefined-variables -O 
 
-REPO = trevorj/docker-salt-layers
-BUILD_TAG = build
-IMAGE = $(REPO):$(BUILD_TAG)
+REPO := $(notdir $(abspath .))
+REPO := ${REPO:docker-%=%}
+REPO := ${USER}/${REPO}
 
-export REPO IMAGE BUILD_TAG
+TAGS := latest yakkety xenial trusty
+TAG ?= $(firstword ${TAGS})
 
-BUILD = docker build
-RUN ?= docker run -it --rm -v $(PWD)/image:/image
-BIN ?= image/bin
-
-GOLANG_IMAGE = golang:1.7
-GOLANG_BUILD = docker run --rm -it -v $(PWD)/$(BIN):/go/bin $(GOLANG_IMAGE)
-GOLANG_DEPS = $(BIN)/boilr
-REPO_$(BIN)/boilr = github.com/tmrts/boilr
-
-BUILD_DEPS = $(GOLANG_DEPS)
-DEPS = $(BUILD_DEPS)
-
-.PHONY: all deps build test
 all: build
 
-$(GOLANG_DEPS):
-	$(GOLANG_BUILD)	go get -u -x -v $(REPO_$@)
+ifneq ("$(wildcard Makefile.deps)","")
+include Makefile.deps
+endif
 
-clean:
-	rm -rf $(BUILD_DEPS)
+##
+## Single
+##
 
-deps: $(DEPS)
+.PHONY: bash bash-verbose bash-debug bash-trace
 
-build: deps
-	$(BUILD) -t $(IMAGE) .
+RUN_CMDS := bash bash-verbose bash-debug bash-trace
+
+${RUN_CMDS}: TAGS = ${TAG}
+${RUN_CMDS}: CMD = bash
+${RUN_CMDS}: run
+
+export ENTRYPOINT_DEBUG ENTRYPOINT_VERBOSE ENTRYPOINT_TRACE
+bash-debug: 	ENTRYPOINT_DEBUG=1
+bash-verbose: ENTRYPOINT_VERBOSE=1
+bash-trace: 	ENTRYPOINT_TRACE=1
+
+RUN_CMD ?= docker run -it --rm -v ${PWD}:/app
+
+run: build
+	${RUN_CMD} \
+		-e ENTRYPOINT_VERBOSE=${ENTRYPOINT_VERBOSE} \
+		-e ENTRYPOINT_DEBUG=${ENTRYPOINT_DEBUG} \
+		-e ENTRYPOINT_TRACE=${ENTRYPOINT_TRACE} \
+		"${REPO}:build-${TAG}" \
+		${CMD}
+
+
+##
+## Lifecycle
+##
+
+.PHONY: ${TAGS}
+.PHONY: all clean deps build test tag push ${TAGS}
+
+deps: ${DEPS}
+
+build: ${TAGS}
 
 test: build
-	$(MAKE) -C tests PARENT_IMAGE=$(IMAGE)
+	(for TAG in ${TAGS}; do \
+		BUILD_TAG=build-$$TAG; \
+		${MAKE} -C tests "PARENT_TAG=$$BUILD_TAG"; \
+	done)
 
-bash: build
-	$(RUN) $(IMAGE) bash
+tag: build
+	(for TAG in ${TAGS}; do \
+		BUILD_TAG=build-$$TAG; \
+		docker tag "${REPO}:$$BUILD_TAG" "${REPO}:$$TAG"; \
+	done)
 
-bash-verbose: build
-	$(RUN) -e ENTRYPOINT_VERBOSE=1 $(IMAGE) bash
+push: tag
+	(for TAG in ${TAGS}; do \
+		BUILD_TAG=build-$$TAG; \
+		docker push "${REPO}:$$TAG"; \
+	done)
 
-bash-debug: build
-	$(RUN) -e ENTRYPOINT_DEBUG=1 $(IMAGE) bash
+clean:
+	rm -rf $(addprefix Dockerfile.,${TAGS})
 
-bash-trace: build
-	$(RUN) -e ENTRYPOINT_TRACE=1 $(IMAGE) bash
+distclean: clean
+	rm -rf ${DEPS}
+
+
+.SECONDEXPANSION:
+
+Dockerfile.%: Dockerfile
+	sed -e 's/^\(FROM .*\)\(:.*\|\)$$/\1:$*/' $^ > $@
+
+${TAGS}: Dockerfile.$$@ deps
+	docker build -f "$(firstword $^)" -t "${REPO}:build-$@" .
+
+
